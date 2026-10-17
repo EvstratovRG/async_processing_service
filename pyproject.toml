@@ -1,0 +1,35 @@
+[project]
+name = "async-processing-service"
+version = "0.1.0"
+description = "Asynchronous payment processing service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "asyncpg>=0.30,<1",
+    "alembic>=1.15,<2",
+    "faststream[rabbit]>=0.6,<0.7",
+    "httpx>=0.28,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "mypy>=1.15,<2", "ruff>=0.11,<1"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = ["integration: requires PostgreSQL and RabbitMQ"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["app", "tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
