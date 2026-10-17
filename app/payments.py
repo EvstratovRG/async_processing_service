@@ -19,7 +19,7 @@ def payment_values(data: PaymentCreate) -> dict[str, Any]:
         "amount": data.amount,
         "currency": data.currency,
         "description": data.description,
-        "metadata": data.metadata,
+        "extra_metadata": data.metadata,
         "webhook_url": str(data.webhook_url),
     }
 
@@ -31,12 +31,14 @@ async def create_payment(
     values: dict[str, Any] = payment_values(data)
     async with sessions.begin() as session:
         inserted: UUID | None = await session.scalar(
-            insert(Payment).values(id=payment_id, idempotency_key=key, status="pending", **values)
-            .on_conflict_do_nothing(index_elements=[Payment.idempotency_key]).returning(Payment.id)
+            insert(Payment)
+            .values(id=payment_id, idempotency_key=key, status="pending", **values)
+            .on_conflict_do_nothing(index_elements=[Payment.idempotency_key])
+            .returning(Payment.id)
         )
-        payment: Payment = (await session.scalars(
-            select(Payment).where(Payment.idempotency_key == key)
-        )).one()
+        payment: Payment = (
+            await session.scalars(select(Payment).where(Payment.idempotency_key == key))
+        ).one()
         if inserted is not None:
             session.add(Outbox(payload={"payment_id": str(payment.id)}))
         elif (
