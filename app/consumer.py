@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -29,7 +29,7 @@ def create_consumer(settings: Settings | None = None) -> FastStream:
     )
 
     @asynccontextmanager
-    async def lifespan() -> AsyncIterator[None]:
+    async def lifespan() -> AsyncGenerator[None]:
         try:
             yield
         finally:
