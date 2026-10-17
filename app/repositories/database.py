@@ -6,7 +6,20 @@ from sqlalchemy.ext.asyncio import (
 )
 
 
-def create_database(url: str) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
-    engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
-    sessions: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
-    return engine, sessions
+class Db:
+    def __init__(self, url: str) -> None:
+        self._engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
+        self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            self._engine,
+            expire_on_commit=False,
+        )
+
+    def get_engine(self) -> AsyncEngine:
+        return self._engine
+
+    def get_session(self) -> AsyncSession:
+        """Return a new session; the caller closes it with an async context manager."""
+        return self._session_factory()
+
+    def get_session_factory(self) -> async_sessionmaker[AsyncSession]:
+        return self._session_factory
