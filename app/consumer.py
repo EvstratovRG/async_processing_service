@@ -11,8 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.config import Settings
 from app.database import create_database
 from app.messaging import NEW_QUEUE, create_broker
-from app.processing import process_payment
-from app.schemas import PaymentEvent
+from app.retry import DLQ, RETRY_QUEUES, handle_payment
 
 
 def create_consumer(settings: Settings | None = None) -> FastStream:
@@ -33,15 +32,15 @@ def create_consumer(settings: Settings | None = None) -> FastStream:
 
     application: FastStream = FastStream(broker, lifespan=lifespan)
 
+    @application.on_startup
+    async def declare_queues() -> None:
+        await broker.connect()
+        for queue in (NEW_QUEUE, *RETRY_QUEUES, DLQ):
+            await broker.declare_queue(queue)
+
     @broker.subscriber(NEW_QUEUE, ack_policy=AckPolicy.MANUAL)
     async def handle(payload: dict[str, Any], message: RabbitMessage) -> None:
-        try:
-            event: PaymentEvent = PaymentEvent.model_validate(payload)
-            await process_payment(sessions, client, event.payment_id)
-        except Exception:
-            await message.nack(requeue=True)
-        else:
-            await message.ack()
+        await handle_payment(payload, message, sessions, client, broker)
 
     return application
 
