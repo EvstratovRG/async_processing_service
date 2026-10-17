@@ -1,14 +1,19 @@
+import asyncio
+from contextlib import suppress
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from secrets import compare_digest
 from typing import Annotated
 from uuid import UUID
 
+from faststream.rabbit import RabbitBroker
 from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.database import create_database
+from app.messaging import NEW_QUEUE, create_broker
+from app.outbox import run_publisher
 from app.models import Payment
 from app.payments import IdempotencyConflict, create_payment
 from app.schemas import PaymentAccepted, PaymentCreate, PaymentDetail
@@ -20,11 +25,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     sessions: async_sessionmaker[AsyncSession]
     engine, sessions = create_database(config)
 
+    broker: RabbitBroker = create_broker(config.rabbitmq_url)
+
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        publisher: asyncio.Task[None] | None = None
         try:
+            await broker.connect()
+            await broker.declare_queue(NEW_QUEUE)
+            publisher = asyncio.create_task(
+                run_publisher(sessions, broker, config.outbox_poll_interval)
+            )
             yield
         finally:
+            if publisher is not None:
+                publisher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await publisher
+            await broker.stop()
             await engine.dispose()
 
     async def authorize(x_api_key: Annotated[str | None, Header()] = None) -> None:
