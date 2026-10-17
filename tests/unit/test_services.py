@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -52,7 +52,7 @@ def transaction() -> tuple[UnitOfWorkFactory, Any, Any, list[str]]:
     events: list[str] = []
 
     @asynccontextmanager
-    async def begin() -> AsyncIterator[UnitOfWork]:
+    async def begin() -> AsyncGenerator[UnitOfWork]:
         events.append("begin")
         try:
             yield unit_of_work

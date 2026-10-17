@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -17,7 +17,7 @@ class Repositories:
 
 def create_unit_of_work(sessions: async_sessionmaker[AsyncSession]) -> UnitOfWorkFactory:
     @asynccontextmanager
-    async def transaction() -> AsyncIterator[UnitOfWork]:
+    async def transaction() -> AsyncGenerator[UnitOfWork]:
         async with sessions.begin() as session:
             yield Repositories(
                 payments=SQLAlchemyPaymentRepository(session),

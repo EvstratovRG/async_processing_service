@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ def create_app(settings: Settings | None = None, db: Db | None = None) -> FastAP
     outbox: OutboxService = OutboxService(unit_of_work, RabbitEventPublisher(broker))
 
     @asynccontextmanager
-    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
         publisher: asyncio.Task[None] | None = None
         try:
             await broker.connect()
