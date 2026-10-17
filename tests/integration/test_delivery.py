@@ -15,17 +15,26 @@ from faststream.rabbit import RabbitBroker
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.adapters.gateway import SimulatedPaymentGateway
+from app.adapters.messaging import (
+    DLQ,
+    NEW_QUEUE,
+    RETRY_QUEUES,
+    RabbitEventPublisher,
+    publish_confirmed,
+)
+from app.adapters.webhook import HTTPWebhookSender
+from app.api.schemas import PaymentCreate
 from app.config import Settings
 from app.consumer import create_consumer
-from app.messaging import NEW_QUEUE, publish_confirmed
-from app.models import Outbox, Payment
-from app.outbox import publish_one
-from app.payments import create_payment
-from app.processing import process_payment
-from app.retry import DLQ, RETRY_QUEUES
-from app.schemas import PaymentCreate
+from app.domain import Payment as DomainPayment
+from app.repositories.models import Outbox, Payment
+from app.repositories.unit_of_work import create_unit_of_work
+from app.services.outbox import OutboxService
+from app.services.payments import PaymentService
+from app.services.processing import ProcessingService
 
-pytestmark = pytest.mark.integration
+pytestmark: pytest.MarkDecorator = pytest.mark.integration
 
 
 def payment_data(url: str = "http://receiver.test/webhook") -> PaymentCreate:
@@ -47,14 +56,24 @@ async def test_outbox_failure_then_recovery(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     broker: RabbitBroker,
 ) -> None:
-    payment: Payment = await create_payment(database[1], payment_data(), str(uuid4()))
-    with patch("app.outbox.publish_confirmed", new_callable=AsyncMock, side_effect=TimeoutError):
+    payment: DomainPayment = await PaymentService(create_unit_of_work(database[1])).create(
+        payment_data().to_domain(), str(uuid4())
+    )
+    with patch(
+        "app.adapters.messaging.publish_confirmed", new_callable=AsyncMock, side_effect=TimeoutError
+    ):
         with pytest.raises(TimeoutError):
-            await publish_one(database[1], broker)
+            await OutboxService(
+                create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+            ).publish_one()
     async with database[1]() as session:
         assert (await session.scalars(select(Outbox))).one().published_at is None
-    assert await publish_one(database[1], broker)
-    assert not await publish_one(database[1], broker)
+    assert await OutboxService(
+        create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+    ).publish_one()
+    assert not await OutboxService(
+        create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+    ).publish_one()
     queue: RobustQueue = await broker.declare_queue(NEW_QUEUE)
     message: AbstractIncomingMessage = await next_message(queue)
     assert json.loads(message.body) == {"payment_id": str(payment.id)}
@@ -68,17 +87,23 @@ async def test_duplicate_after_publish_commit_failure(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     broker: RabbitBroker,
 ) -> None:
-    await create_payment(database[1], payment_data(), str(uuid4()))
+    await PaymentService(create_unit_of_work(database[1])).create(
+        payment_data().to_domain(), str(uuid4())
+    )
 
     # Deliver the real message, then emulate loss of the confirmation/DB commit.
     async def publish_then_fail(*args: Any, **kwargs: Any) -> None:
         await publish_confirmed(*args, **kwargs)
         raise TimeoutError
 
-    with patch("app.outbox.publish_confirmed", side_effect=publish_then_fail):
+    with patch("app.adapters.messaging.publish_confirmed", side_effect=publish_then_fail):
         with pytest.raises(TimeoutError):
-            await publish_one(database[1], broker)
-    assert await publish_one(database[1], broker)
+            await OutboxService(
+                create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+            ).publish_one()
+    assert await OutboxService(
+        create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+    ).publish_one()
     queue: RobustQueue = await broker.declare_queue(NEW_QUEUE)
     first: AbstractIncomingMessage = await next_message(queue)
     second: AbstractIncomingMessage = await next_message(queue)
@@ -91,13 +116,17 @@ async def test_unroutable_event_is_not_marked_published(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     broker: RabbitBroker,
 ) -> None:
-    await create_payment(database[1], payment_data(), str(uuid4()))
+    await PaymentService(create_unit_of_work(database[1])).create(
+        payment_data().to_domain(), str(uuid4())
+    )
     from aio_pika.exceptions import DeliveryError
     from faststream.rabbit import RabbitQueue
 
-    with patch("app.outbox.NEW_QUEUE", RabbitQueue("absent-queue", declare=False)):
+    with patch("app.adapters.messaging.NEW_QUEUE", RabbitQueue("absent-queue", declare=False)):
         with pytest.raises(DeliveryError):
-            await publish_one(database[1], broker)
+            await OutboxService(
+                create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+            ).publish_one()
     async with database[1]() as session:
         assert (await session.scalars(select(Outbox))).one().published_at is None
 
@@ -107,7 +136,9 @@ async def test_webhook_retry_preserves_result_and_duplicate_is_noop(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     result: str,
 ) -> None:
-    payment: Payment = await create_payment(database[1], payment_data(), str(uuid4()))
+    payment: DomainPayment = await PaymentService(create_unit_of_work(database[1])).create(
+        payment_data().to_domain(), str(uuid4())
+    )
     requests: list[httpx.Request] = []
 
     def receiver(request: httpx.Request) -> httpx.Response:
@@ -115,20 +146,23 @@ async def test_webhook_retry_preserves_result_and_duplicate_is_noop(
         return httpx.Response(503 if len(requests) == 1 else 204)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receiver)) as client:
+        processing: ProcessingService = ProcessingService(
+            create_unit_of_work(database[1]), SimulatedPaymentGateway(), HTTPWebhookSender(client)
+        )
         with patch(
-            "app.processing.simulate_payment", new_callable=AsyncMock, return_value=result
+            "app.adapters.gateway.SimulatedPaymentGateway.charge",
+            new_callable=AsyncMock,
+            return_value=result,
         ) as simulate:
             with pytest.raises(httpx.HTTPStatusError):
-                await process_payment(database[1], client, payment.id)
+                await processing.process(payment.id)
             async with database[1]() as session:
                 saved: Payment = (await session.scalars(select(Payment))).one()
                 assert saved.status == result
                 assert saved.processed_at is not None
                 assert saved.webhook_sent_at is None
                 processed_at: datetime = saved.processed_at
-            await asyncio.gather(
-                *(process_payment(database[1], client, payment.id) for _ in range(3))
-            )
+            await asyncio.gather(*(processing.process(payment.id) for _ in range(3)))
             simulate.assert_awaited_once()
     assert len(requests) == 2
     assert json.loads(requests[0].content) == json.loads(requests[1].content)
@@ -158,19 +192,25 @@ async def test_live_consumer_retries_three_times_then_dlq(
     broker: RabbitBroker,
     consumer: FastStream,
 ) -> None:
-    payment: Payment = await create_payment(database[1], payment_data(), str(uuid4()))
+    payment: DomainPayment = await PaymentService(create_unit_of_work(database[1])).create(
+        payment_data().to_domain(), str(uuid4())
+    )
     # Raise an actual HTTPX timeout instead of contacting an external host.
     with (
         patch(
-            "app.processing.simulate_payment", new_callable=AsyncMock, return_value="succeeded"
+            "app.adapters.gateway.SimulatedPaymentGateway.charge",
+            new_callable=AsyncMock,
+            return_value="succeeded",
         ) as simulate,
         patch(
-            "app.processing.httpx.AsyncClient.post",
+            "app.adapters.webhook.httpx.AsyncClient.post",
             autospec=True,
             side_effect=httpx.ConnectTimeout("test timeout"),
         ) as post,
     ):
-        await publish_one(database[1], broker)
+        await OutboxService(
+            create_unit_of_work(database[1]), RabbitEventPublisher(broker)
+        ).publish_one()
         queue: RobustQueue = await broker.declare_queue(DLQ)
         message: AbstractIncomingMessage = await next_message(queue, timeout=15)
         assert json.loads(message.body) == {"payment_id": str(payment.id)}

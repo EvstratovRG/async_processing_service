@@ -5,7 +5,7 @@ from sqlalchemy import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.config import Settings
-from app.models import Base
+from app.repositories.models import Base
 
 
 def configure(connection: Connection) -> None:
