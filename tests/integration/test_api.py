@@ -9,13 +9,14 @@ from fastapi import FastAPI
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.api.schemas import PaymentCreate
 from app.config import Settings
 from app.main import create_app
-from app.models import Outbox, Payment
-from app.payments import create_payment
-from app.schemas import PaymentCreate
+from app.repositories.models import Outbox, Payment
+from app.repositories.unit_of_work import create_unit_of_work
+from app.services.payments import PaymentService
 
-pytestmark = pytest.mark.integration
+pytestmark: pytest.MarkDecorator = pytest.mark.integration
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ async def api(
     integration_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[httpx.AsyncClient]:
-    def get_database(settings: Settings) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    def get_database(url: str) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
         return database
 
     monkeypatch.setattr("app.main.create_database", get_database)
@@ -128,7 +129,9 @@ async def test_payment_rolls_back_if_outbox_insert_fails(
     event.listen(Outbox, "before_insert", fail_outbox)
     try:
         with pytest.raises(RuntimeError, match="outbox unavailable"):
-            await create_payment(database[1], PaymentCreate.model_validate(body), str(uuid4()))
+            await PaymentService(create_unit_of_work(database[1])).create(
+                PaymentCreate.model_validate(body).to_domain(), str(uuid4())
+            )
     finally:
         event.remove(Outbox, "before_insert", fail_outbox)
     async with database[1]() as session:

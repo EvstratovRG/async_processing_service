@@ -10,10 +10,9 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.adapters.messaging import DLQ, NEW_QUEUE, RETRY_QUEUES, create_broker
 from app.config import Settings
-from app.database import create_database
-from app.messaging import NEW_QUEUE, create_broker
-from app.retry import DLQ, RETRY_QUEUES
+from app.repositories.database import create_database
 
 
 @pytest.fixture(scope="session")
@@ -41,7 +40,7 @@ async def database(
 ) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
     engine: AsyncEngine
     sessions: async_sessionmaker[AsyncSession]
-    engine, sessions = create_database(integration_settings)
+    engine, sessions = create_database(integration_settings.database_url)
     try:
         async with engine.begin() as connection:
             await connection.execute(text("TRUNCATE payments, outbox"))

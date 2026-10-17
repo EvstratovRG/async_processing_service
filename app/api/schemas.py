@@ -1,12 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-Currency = Literal["RUB", "USD", "EUR"]
-PaymentStatus = Literal["pending", "succeeded", "failed"]
+from app.domain import Currency, PaymentData, PaymentStatus
 
 
 class PaymentCreate(BaseModel):
@@ -17,6 +16,15 @@ class PaymentCreate(BaseModel):
     description: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     webhook_url: HttpUrl
+
+    def to_domain(self) -> PaymentData:
+        return PaymentData(
+            amount=self.amount,
+            currency=self.currency,
+            description=self.description,
+            metadata=self.metadata,
+            webhook_url=str(self.webhook_url),
+        )
 
 
 class PaymentAccepted(BaseModel):
@@ -32,7 +40,3 @@ class PaymentDetail(PaymentAccepted):
     metadata: dict[str, Any]
     webhook_url: HttpUrl
     processed_at: datetime | None
-
-
-class PaymentEvent(BaseModel):
-    payment_id: UUID
