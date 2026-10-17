@@ -7,6 +7,6 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://payments:payments@localhost:5432/payments"
     rabbitmq_url: str = "amqp://payments:payments@localhost:5672/"
-    api_key: SecretStr
+    api_key: SecretStr = Field(min_length=1)
     outbox_poll_interval: float = Field(default=1.0, gt=0)
     webhook_timeout: float = Field(default=10.0, gt=0)

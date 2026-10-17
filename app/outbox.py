@@ -13,12 +13,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 async def publish_one(
-    sessions: async_sessionmaker[AsyncSession], broker: RabbitBroker,
+    sessions: async_sessionmaker[AsyncSession],
+    broker: RabbitBroker,
 ) -> bool:
     async with sessions.begin() as session:
         event: Outbox | None = await session.scalar(
-            select(Outbox).where(Outbox.published_at.is_(None))
-            .order_by(Outbox.created_at).limit(1).with_for_update(skip_locked=True)
+            select(Outbox)
+            .where(Outbox.published_at.is_(None))
+            .order_by(Outbox.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
         )
         if event is None:
             return False
@@ -28,7 +32,9 @@ async def publish_one(
 
 
 async def run_publisher(
-    sessions: async_sessionmaker[AsyncSession], broker: RabbitBroker, interval: float,
+    sessions: async_sessionmaker[AsyncSession],
+    broker: RabbitBroker,
+    interval: float,
 ) -> None:
     while True:
         try:

@@ -1,20 +1,19 @@
 import asyncio
-from contextlib import suppress
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from secrets import compare_digest
 from typing import Annotated
 from uuid import UUID
 
-from faststream.rabbit import RabbitBroker
 from fastapi import Depends, FastAPI, Header, HTTPException
+from faststream.rabbit import RabbitBroker
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.database import create_database
 from app.messaging import NEW_QUEUE, create_broker
-from app.outbox import run_publisher
 from app.models import Payment
+from app.outbox import run_publisher
 from app.payments import IdempotencyConflict, create_payment
 from app.schemas import PaymentAccepted, PaymentCreate, PaymentDetail
 
@@ -52,8 +51,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
     application: FastAPI = FastAPI(
-        title="Async Processing Service", docs_url=None, redoc_url=None, openapi_url=None,
-        lifespan=lifespan, dependencies=[Depends(authorize)],
+        title="Async Processing Service",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+        dependencies=[Depends(authorize)],
     )
 
     @application.post("/api/v1/payments", status_code=202, response_model=PaymentAccepted)
@@ -64,10 +67,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             payment: Payment = await create_payment(sessions, data, idempotency_key)
         except IdempotencyConflict:
-            raise HTTPException(status_code=409, detail="Idempotency key has different data") from None
-        return PaymentAccepted.model_validate({
-            "payment_id": payment.id, "status": payment.status, "created_at": payment.created_at,
-        })
+            raise HTTPException(
+                status_code=409, detail="Idempotency key has different data"
+            ) from None
+        return PaymentAccepted.model_validate(
+            {
+                "payment_id": payment.id,
+                "status": payment.status,
+                "created_at": payment.created_at,
+            }
+        )
 
     @application.get("/api/v1/payments/{payment_id}", response_model=PaymentDetail)
     async def get_payment(payment_id: UUID) -> PaymentDetail:
@@ -75,11 +84,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payment: Payment | None = await session.get(Payment, payment_id)
             if payment is None:
                 raise HTTPException(status_code=404, detail="Payment not found")
-            return PaymentDetail.model_validate({
-                "payment_id": payment.id, "status": payment.status, "created_at": payment.created_at,
-                "amount": payment.amount, "currency": payment.currency,
-                "description": payment.description, "metadata": payment.extra_metadata,
-                "webhook_url": payment.webhook_url, "processed_at": payment.processed_at,
-            })
+            return PaymentDetail.model_validate(
+                {
+                    "payment_id": payment.id,
+                    "status": payment.status,
+                    "created_at": payment.created_at,
+                    "amount": payment.amount,
+                    "currency": payment.currency,
+                    "description": payment.description,
+                    "metadata": payment.extra_metadata,
+                    "webhook_url": payment.webhook_url,
+                    "processed_at": payment.processed_at,
+                }
+            )
 
     return application
