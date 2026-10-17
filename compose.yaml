@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: payments
+      RABBITMQ_DEFAULT_PASS: payments
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  api:
+    build: .
+    environment: &app_environment
+      API_KEY: ${API_KEY:?Set API_KEY in .env or environment}
+      DATABASE_URL: postgresql+asyncpg://payments:payments@postgres:5432/payments
+      RABBITMQ_URL: amqp://payments:payments@rabbitmq:5672/
+      OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-1}
+      WEBHOOK_TIMEOUT: ${WEBHOOK_TIMEOUT:-10}
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"]
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, http.client; c = http.client.HTTPConnection('localhost', 8000, timeout=2); c.request('GET', '/api/v1/payments/00000000-0000-0000-0000-000000000000', headers={'X-API-Key': os.environ['API_KEY']}); assert c.getresponse().status == 404"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    stop_grace_period: 30s
+  consumer:
+    build: .
+    environment: *app_environment
+    command: ["python", "-m", "app.consumer"]
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 30s
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
