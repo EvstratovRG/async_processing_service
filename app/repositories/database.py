@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 
-class Db:
+class Database:
     def __init__(self, url: str) -> None:
         self._engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -18,7 +18,6 @@ class Db:
         return self._engine
 
     def get_session(self) -> AsyncSession:
-        """Return a new session; the caller closes it with an async context manager."""
         return self._session_factory()
 
     def get_session_factory(self) -> async_sessionmaker[AsyncSession]:

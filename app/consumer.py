@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import httpx
 from faststream import AckPolicy, FastStream
@@ -12,20 +11,20 @@ from app.adapters.messaging import DLQ, NEW_QUEUE, RETRY_QUEUES, create_broker
 from app.adapters.webhook import HTTPWebhookSender
 from app.config import Settings
 from app.handlers.payments import handle_payment
-from app.repositories.database import Db
+from app.repositories.database import Database
 from app.repositories.unit_of_work import create_unit_of_work
-from app.services.processing import ProcessingService
+from app.services.processing import PaymentProcessingService
 
 
 def create_consumer(settings: Settings | None = None) -> FastStream:
     config: Settings = settings if settings is not None else Settings()
-    database: Db = Db(config.database_url)
+    database: Database = Database(config.database_url)
     broker: RabbitBroker = create_broker(config.rabbitmq_url)
     client: httpx.AsyncClient = httpx.AsyncClient(timeout=config.webhook_timeout)
-    processing: ProcessingService = ProcessingService(
+    processing: PaymentProcessingService = PaymentProcessingService(
         create_unit_of_work(database.get_session_factory()),
         SimulatedPaymentGateway(),
-        HTTPWebhookSender(client),
+        HTTPWebhookSender(client, config.webhook_timeout),
     )
 
     @asynccontextmanager
@@ -46,8 +45,11 @@ def create_consumer(settings: Settings | None = None) -> FastStream:
         for queue in (NEW_QUEUE, *RETRY_QUEUES, DLQ):
             await broker.declare_queue(queue)
 
-    @broker.subscriber(NEW_QUEUE, ack_policy=AckPolicy.MANUAL)
-    async def handle(payload: dict[str, Any], message: RabbitMessage) -> None:
+    async def decode_raw(message: RabbitMessage) -> bytes:
+        return message.body
+
+    @broker.subscriber(NEW_QUEUE, ack_policy=AckPolicy.MANUAL, decoder=decode_raw)
+    async def handle(payload: bytes, message: RabbitMessage) -> None:
         await handle_payment(payload, message, processing, broker)
 
     return application

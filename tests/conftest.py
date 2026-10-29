@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.adapters.messaging import DLQ, NEW_QUEUE, RETRY_QUEUES, create_broker
 from app.config import Settings
-from app.repositories.database import Db
+from app.repositories.database import Database
 
 
 @pytest.fixture(scope="session")
@@ -35,8 +35,8 @@ def integration_settings() -> Settings:
 
 
 @pytest.fixture
-async def db(integration_settings: Settings) -> AsyncIterator[Db]:
-    database: Db = Db(integration_settings.database_url)
+async def db(integration_settings: Settings) -> AsyncIterator[Database]:
+    database: Database = Database(integration_settings.database_url)
     try:
         yield database
     finally:
@@ -44,7 +44,9 @@ async def db(integration_settings: Settings) -> AsyncIterator[Db]:
 
 
 @pytest.fixture
-async def database(db: Db) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
+async def database(
+    db: Database,
+) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
     async with db.get_session() as session:
         async with session.begin():
             await session.execute(text("TRUNCATE payments, outbox"))

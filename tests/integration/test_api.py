@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.api.schemas import PaymentCreate
 from app.config import Settings
 from app.main import create_app
-from app.repositories.database import Db
+from app.repositories.database import Database
 from app.repositories.models import Outbox, Payment
 from app.repositories.unit_of_work import create_unit_of_work
 from app.services.payments import PaymentService
@@ -24,7 +24,7 @@ pytestmark: pytest.MarkDecorator = pytest.mark.integration
 async def api(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     integration_settings: Settings,
-    db: Db,
+    db: Database,
 ) -> AsyncIterator[httpx.AsyncClient]:
     application: FastAPI = create_app(integration_settings, db=db)
     # HTTPX ASGITransport handles HTTP only; the publisher is tested separately.

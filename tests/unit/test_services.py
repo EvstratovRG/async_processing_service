@@ -21,7 +21,7 @@ from app.services.ports import (
     UnitOfWorkFactory,
     WebhookSender,
 )
-from app.services.processing import ProcessingService
+from app.services.processing import PaymentProcessingService
 
 
 @pytest.fixture
@@ -127,7 +127,7 @@ async def test_webhook_failure_does_not_roll_back_payment_result(
         raise RuntimeError("delivery unavailable")
 
     webhook.send.side_effect = fail_notification
-    service: ProcessingService = ProcessingService(factory, gateway, webhook)
+    service: PaymentProcessingService = PaymentProcessingService(factory, gateway, webhook)
     with pytest.raises(RuntimeError, match="delivery unavailable"):
         await service.process(payment.id)
     payments.set_result.assert_awaited_once()
@@ -144,7 +144,7 @@ async def test_completed_payment_only_retries_webhook(
     payments.get.return_value = completed
     gateway: Any = create_autospec(PaymentGateway, instance=True)
     webhook: Any = create_autospec(WebhookSender, instance=True)
-    await ProcessingService(factory, gateway, webhook).process(payment.id)
+    await PaymentProcessingService(factory, gateway, webhook).process(payment.id)
     gateway.charge.assert_not_awaited()
     payments.set_result.assert_not_awaited()
     webhook.send.assert_awaited_once_with(completed)
@@ -165,7 +165,7 @@ async def test_delivered_payment_is_noop(
     )
     gateway: Any = create_autospec(PaymentGateway, instance=True)
     webhook: Any = create_autospec(WebhookSender, instance=True)
-    await ProcessingService(factory, gateway, webhook).process(payment.id)
+    await PaymentProcessingService(factory, gateway, webhook).process(payment.id)
     gateway.charge.assert_not_awaited()
     webhook.send.assert_not_awaited()
     payments.mark_webhook_sent.assert_not_awaited()
@@ -210,3 +210,56 @@ async def test_outbox_failure_leaves_event_unpublished(
         await OutboxService(factory, publisher).publish_one()
     outbox.mark_published.assert_not_awaited()
     assert events == ["begin", "rollback"]
+
+
+async def test_webhook_total_timeout_bounds_slow_response(payment: Payment) -> None:
+    import asyncio
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    import httpx
+
+    from app.adapters.webhook import HTTPWebhookSender
+
+    async def slow_receiver(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1)
+        return httpx.Response(204)
+
+    completed: Payment = replace(
+        payment, status="succeeded", processed_at=datetime.now(timezone.utc)
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(slow_receiver)) as client:
+        sender: HTTPWebhookSender = HTTPWebhookSender(client, timeout=0.05)
+        task: asyncio.Task[None] = asyncio.create_task(sender.send(completed))
+        try:
+            done: set[asyncio.Task[None]]
+            done, _ = await asyncio.wait({task}, timeout=0.3)
+            assert task in done
+            with pytest.raises(TimeoutError):
+                await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_webhook_does_not_read_response_body(payment: Payment) -> None:
+    from collections.abc import AsyncIterator
+
+    import httpx
+
+    from app.adapters.webhook import HTTPWebhookSender
+
+    class UnreadableBody(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            raise AssertionError("Webhook response body must not be read")
+            yield b""
+
+    def receiver(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(204, stream=UnreadableBody())
+
+    completed: Payment = replace(
+        payment, status="succeeded", processed_at=datetime.now(timezone.utc)
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(receiver)) as client:
+        await HTTPWebhookSender(client, timeout=1).send(completed)

@@ -8,11 +8,11 @@ class PaymentService:
     def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
         self._unit_of_work: UnitOfWorkFactory = unit_of_work
 
-    async def create(self, data: PaymentData, key: str) -> Payment:
+    async def create(self, data: PaymentData, idempotency_key: str) -> Payment:
         async with self._unit_of_work() as transaction:
             payment: Payment
             created: bool
-            payment, created = await transaction.payments.create_if_absent(data, key)
+            payment, created = await transaction.payments.create_if_absent(data, idempotency_key)
             if created:
                 await transaction.outbox.add(payment.id)
             elif payment.data != data:
