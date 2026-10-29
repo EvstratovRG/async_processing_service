@@ -8,7 +8,9 @@ from app.domain import OutboxEvent, Payment, PaymentData, PaymentStatus
 
 
 class PaymentRepository(Protocol):
-    async def create_if_absent(self, data: PaymentData, key: str) -> tuple[Payment, bool]: ...
+    async def create_if_absent(
+        self, data: PaymentData, idempotency_key: str
+    ) -> tuple[Payment, bool]: ...
 
     async def get(self, payment_id: UUID, *, for_update: bool = False) -> Payment | None: ...
 

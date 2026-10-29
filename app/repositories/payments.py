@@ -31,12 +31,14 @@ class SQLAlchemyPaymentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session: AsyncSession = session
 
-    async def create_if_absent(self, data: PaymentData, key: str) -> tuple[Payment, bool]:
+    async def create_if_absent(
+        self, data: PaymentData, idempotency_key: str
+    ) -> tuple[Payment, bool]:
         inserted: UUID | None = await self._session.scalar(
             insert(PaymentModel)
             .values(
                 id=uuid4(),
-                idempotency_key=key,
+                idempotency_key=idempotency_key,
                 status="pending",
                 amount=data.amount,
                 currency=data.currency,
@@ -49,7 +51,7 @@ class SQLAlchemyPaymentRepository:
         )
         model: PaymentModel = (
             await self._session.scalars(
-                select(PaymentModel).where(PaymentModel.idempotency_key == key)
+                select(PaymentModel).where(PaymentModel.idempotency_key == idempotency_key)
             )
         ).one()
         return to_payment(model), inserted is not None

@@ -5,7 +5,7 @@ from app.domain import Payment, PaymentNotFound, PaymentStatus
 from app.services.ports import PaymentGateway, UnitOfWorkFactory, WebhookSender
 
 
-class ProcessingService:
+class PaymentProcessingService:
     def __init__(
         self,
         unit_of_work: UnitOfWorkFactory,

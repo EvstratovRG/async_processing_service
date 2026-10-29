@@ -32,7 +32,7 @@ from app.repositories.models import Outbox, Payment
 from app.repositories.unit_of_work import create_unit_of_work
 from app.services.outbox import OutboxService
 from app.services.payments import PaymentService
-from app.services.processing import ProcessingService
+from app.services.processing import PaymentProcessingService
 
 pytestmark: pytest.MarkDecorator = pytest.mark.integration
 
@@ -146,8 +146,10 @@ async def test_webhook_retry_preserves_result_and_duplicate_is_noop(
         return httpx.Response(503 if len(requests) == 1 else 204)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receiver)) as client:
-        processing: ProcessingService = ProcessingService(
-            create_unit_of_work(database[1]), SimulatedPaymentGateway(), HTTPWebhookSender(client)
+        processing: PaymentProcessingService = PaymentProcessingService(
+            create_unit_of_work(database[1]),
+            SimulatedPaymentGateway(),
+            HTTPWebhookSender(client, 10),
         )
         with patch(
             "app.adapters.gateway.SimulatedPaymentGateway.charge",
@@ -203,7 +205,7 @@ async def test_live_consumer_retries_three_times_then_dlq(
             return_value="succeeded",
         ) as simulate,
         patch(
-            "app.adapters.webhook.httpx.AsyncClient.post",
+            "app.adapters.webhook.httpx.AsyncClient.send",
             autospec=True,
             side_effect=httpx.ConnectTimeout("test timeout"),
         ) as post,
@@ -249,3 +251,19 @@ async def test_broker_redelivery_preserves_payload(broker: RabbitBroker) -> None
     assert redelivered.redelivered
     assert json.loads(redelivered.body) == payload
     await redelivered.ack()
+
+
+@pytest.mark.parametrize("body", [b"{", b"[]"])
+async def test_malformed_message_goes_to_dlq_and_consumer_continues(
+    broker: RabbitBroker, consumer: FastStream, body: bytes
+) -> None:
+    await broker.publish(body, queue=NEW_QUEUE, content_type="application/json", persist=True)
+    queue: RobustQueue = await broker.declare_queue(DLQ)
+    message: AbstractIncomingMessage = await next_message(queue, timeout=5)
+    assert message.body == body
+    await message.ack()
+
+    await broker.publish(b"{}", queue=NEW_QUEUE, content_type="application/json", persist=True)
+    next_failed: AbstractIncomingMessage = await next_message(queue, timeout=5)
+    assert next_failed.body == b"{}"
+    await next_failed.ack()

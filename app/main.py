@@ -8,7 +8,7 @@ from faststream.rabbit import RabbitBroker
 from app.adapters.messaging import NEW_QUEUE, RabbitEventPublisher, create_broker
 from app.api.payments import create_router
 from app.config import Settings
-from app.repositories.database import Db
+from app.repositories.database import Database
 from app.repositories.unit_of_work import create_unit_of_work
 from app.services.outbox import OutboxService
 from app.services.payments import PaymentService
@@ -16,9 +16,9 @@ from app.services.ports import UnitOfWorkFactory
 from app.workers.outbox import run_publisher
 
 
-def create_app(settings: Settings | None = None, db: Db | None = None) -> FastAPI:
-    config: Settings = settings if settings is not None else Settings()
-    database: Db = db if db is not None else Db(config.database_url)
+def create_app(settings: Settings | None = None, db: Database | None = None) -> FastAPI:
+    config: Settings = settings or Settings()
+    database: Database = db if db is not None else Database(config.database_url)
     unit_of_work: UnitOfWorkFactory = create_unit_of_work(database.get_session_factory())
     payments: PaymentService = PaymentService(unit_of_work)
     broker: RabbitBroker = create_broker(config.rabbitmq_url)

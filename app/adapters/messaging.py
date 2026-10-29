@@ -30,7 +30,7 @@ def create_broker(url: str) -> RabbitBroker:
 
 async def publish_confirmed(
     broker: RabbitBroker,
-    payload: dict[str, Any],
+    payload: dict[str, Any] | bytes,
     queue: RabbitQueue,
     headers: dict[str, Any] | None = None,
 ) -> None:

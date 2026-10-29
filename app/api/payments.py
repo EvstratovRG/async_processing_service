@@ -32,7 +32,7 @@ def create_router(service: PaymentService, api_key: str) -> APIRouter:
             payment_id=payment.id, status=payment.status, created_at=payment.created_at
         )
 
-    @router.get("/{payment_id}", response_model=PaymentDetail)
+    @router.get("/{payment_id}")
     async def get_payment(payment_id: UUID) -> PaymentDetail:
         try:
             payment: Payment = await service.get(payment_id)
