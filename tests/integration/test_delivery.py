@@ -1,6 +1,5 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -25,8 +24,6 @@ from app.adapters.messaging import (
 )
 from app.adapters.webhook import HTTPWebhookSender
 from app.api.schemas import PaymentCreate
-from app.config import Settings
-from app.consumer import create_consumer
 from app.domain import Payment as DomainPayment
 from app.repositories.models import Outbox, Payment
 from app.repositories.unit_of_work import create_unit_of_work
@@ -172,21 +169,6 @@ async def test_webhook_retry_preserves_result_and_duplicate_is_noop(
         saved = (await session.scalars(select(Payment))).one()
         assert saved.processed_at == processed_at
         assert saved.webhook_sent_at is not None
-
-
-@pytest.fixture
-async def consumer(
-    integration_settings: Settings,
-    database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-    broker: RabbitBroker,
-) -> AsyncIterator[FastStream]:
-    application: FastStream = create_consumer(integration_settings)
-    async with application.lifespan_context():
-        await application.start()
-        try:
-            yield application
-        finally:
-            await application.stop()
 
 
 async def test_live_consumer_retries_three_times_then_dlq(

@@ -3,7 +3,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
-from faststream.rabbit import RabbitBroker
 
 from app.adapters.messaging import NEW_QUEUE, RabbitEventPublisher, create_broker
 from app.api.payments import create_router
@@ -12,17 +11,16 @@ from app.repositories.database import Database
 from app.repositories.unit_of_work import create_unit_of_work
 from app.services.outbox import OutboxService
 from app.services.payments import PaymentService
-from app.services.ports import UnitOfWorkFactory
 from app.workers.outbox import run_publisher
 
 
 def create_app(settings: Settings | None = None, db: Database | None = None) -> FastAPI:
-    config: Settings = settings or Settings()
-    database: Database = db if db is not None else Database(config.database_url)
-    unit_of_work: UnitOfWorkFactory = create_unit_of_work(database.get_session_factory())
-    payments: PaymentService = PaymentService(unit_of_work)
-    broker: RabbitBroker = create_broker(config.rabbitmq_url)
-    outbox: OutboxService = OutboxService(unit_of_work, RabbitEventPublisher(broker))
+    config = settings or Settings()
+    database = db if db is not None else Database(config.database_url)
+    unit_of_work = create_unit_of_work(database.get_session_factory())
+    payments = PaymentService(unit_of_work)
+    broker = create_broker(config.rabbitmq_url)
+    outbox = OutboxService(unit_of_work, RabbitEventPublisher(broker))
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -44,7 +42,7 @@ def create_app(settings: Settings | None = None, db: Database | None = None) -> 
                 finally:
                     await database.get_engine().dispose()
 
-    application: FastAPI = FastAPI(
+    application = FastAPI(
         title="Async Processing Service",
         docs_url=None,
         redoc_url=None,

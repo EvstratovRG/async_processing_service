@@ -1,50 +1,18 @@
 import asyncio
-from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.api.schemas import PaymentCreate
-from app.config import Settings
-from app.main import create_app
-from app.repositories.database import Database
 from app.repositories.models import Outbox, Payment
 from app.repositories.unit_of_work import create_unit_of_work
 from app.services.payments import PaymentService
 
 pytestmark: pytest.MarkDecorator = pytest.mark.integration
-
-
-@pytest.fixture
-async def api(
-    database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-    integration_settings: Settings,
-    db: Database,
-) -> AsyncIterator[httpx.AsyncClient]:
-    application: FastAPI = create_app(integration_settings, db=db)
-    # HTTPX ASGITransport handles HTTP only; the publisher is tested separately.
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=application),
-        base_url="http://test",
-        headers={"X-API-Key": "test-key"},
-    ) as client:
-        yield client
-
-
-@pytest.fixture
-def body() -> dict[str, Any]:
-    return {
-        "amount": "123.45",
-        "currency": "RUB",
-        "description": "Test payment",
-        "metadata": {"order": 7},
-        "webhook_url": "http://receiver.test/webhook",
-    }
 
 
 async def test_auth_validation_and_not_found(api: httpx.AsyncClient, body: dict[str, Any]) -> None:
